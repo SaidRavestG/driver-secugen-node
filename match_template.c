@@ -54,11 +54,30 @@ int main(int argc, char* argv[]) {
     }
 
     // Leer templates en memoria
-    unsigned char tpl1[378], tpl2[378];
-    fread(tpl1, sizeof(tpl1), 1, file1);
-    fread(tpl2, sizeof(tpl2), 1, file2);
+    unsigned char *tpl1 = (unsigned char *)malloc(378);
+    unsigned char *tpl2 = (unsigned char *)malloc(378);
+    
+    if (!tpl1 || !tpl2) {
+        printf("❌ Error: No se pudo asignar memoria\n");
+        if (tpl1) free(tpl1);
+        if (tpl2) free(tpl2);
+        fclose(file1);
+        fclose(file2);
+        return -1;
+    }
+
+    size_t read1 = fread(tpl1, 1, 378, file1);
+    size_t read2 = fread(tpl2, 1, 378, file2);
+    
     fclose(file1);
     fclose(file2);
+
+    if (read1 != 378 || read2 != 378) {
+        printf("❌ Error: Lectura incompleta de templates (leído1: %zu, leído2: %zu)\n", read1, read2);
+        free(tpl1);
+        free(tpl2);
+        return -1;
+    }
 
     // Imprimir primeros 10 bytes de cada template
     printf("📋 Primeros 10 bytes de tpl1: ");
@@ -70,10 +89,12 @@ int main(int argc, char* argv[]) {
     printf("\n");
 
     // Inicializar el SDK de SecuGen
-    HSGFPM sgfplib;
+    HSGFPM sgfplib = NULL;  // Inicializar explícitamente a NULL
     DWORD ret = SGFPM_Create(&sgfplib);
-    if (ret != SGFDX_ERROR_NONE) {
+    if (ret != SGFDX_ERROR_NONE || !sgfplib) {
         printf("❌ Error creando SGFPM: %lu\n", ret);
+        free(tpl1);
+        free(tpl2);
         return -1;
     }
 
@@ -81,6 +102,8 @@ int main(int argc, char* argv[]) {
     if (ret != SGFDX_ERROR_NONE) {
         printf("❌ Error inicializando SGFPM: %lu\n", ret);
         SGFPM_Terminate(sgfplib);
+        free(tpl1);
+        free(tpl2);
         return -1;
     }
 
@@ -92,22 +115,71 @@ int main(int argc, char* argv[]) {
 
     // Comparar templates directamente sin conversión
     BOOL matched = FALSE;
+    DWORD score = 0;
     printf("⚖️ Comparando templates...\n");
-    ret = SGFPM_MatchAnsiTemplate(sgfplib, tpl1, SG_IMPTYPE_ANSI378, tpl2, SG_IMPTYPE_ANSI378, SGFDX_SECURITY_MEDIUM, &matched);
-
-    // Manejar errores antes de acceder a `matched`
+    
+    // Obtener puntaje de coincidencia primero
+    ret = SGFPM_GetMatchingScore(sgfplib, tpl1, tpl2, &score);
     if (ret != SGFDX_ERROR_NONE) {
-        printf("❌ Error comparando templates: %lu\n", ret);
+        printf("❌ Error obteniendo puntaje de coincidencia: %lu\n", ret);
         SGFPM_Terminate(sgfplib);
+        free(tpl1);
+        free(tpl2);
         return -1;
     }
+    
+    printf("📊 Puntaje de coincidencia: %lu\n", score);
+    
+    // Definir un umbral de puntaje mínimo
+    const DWORD MIN_SCORE = 50;  // Ajusta este valor según sea necesario
+    
+    // Probar con diferentes niveles de seguridad
+    int security_levels[] = {1, 2, 3, 4, 5};
+    BOOL matched_any = FALSE;
+    
+    for (int i = 0; i < 5; i++) {
+        BOOL current_matched = FALSE;
+        ret = SGFPM_MatchAnsiTemplate(sgfplib, tpl1, SG_IMPTYPE_ANSI378, 
+                                    tpl2, SG_IMPTYPE_ANSI378, 
+                                    security_levels[i], &current_matched);
+        
+        if (ret != SGFDX_ERROR_NONE) {
+            printf("❌ Error en comparación con nivel %d: %lu\n", security_levels[i], ret);
+            continue;
+        }
+        
+        printf("🔍 Nivel de seguridad %d: %s (Score: %lu)\n", 
+               security_levels[i], 
+               current_matched ? "Coincide" : "No coincide",
+               score);
+               
+        if (current_matched) matched_any = TRUE;
+    }
 
-    // Mostrar resultado de la comparación
+    // Considerar coincidencia si el puntaje es suficiente o si coincidió en algún nivel
+    matched = (score >= MIN_SCORE) || matched_any;
+
+    printf("\n📋 Resultado final:\n");
+    printf("📊 Puntaje: %lu (Mínimo requerido: %lu)\n", score, MIN_SCORE);
     if (matched)
         printf("✅ Las huellas coinciden\n");
     else
         printf("❌ Las huellas NO coinciden\n");
 
+    // Verificar el tamaño del template
+    DWORD templateSize = 0;
+    ret = SGFPM_GetTemplateSize(sgfplib, tpl1, &templateSize);
+    if (ret == SGFDX_ERROR_NONE) {
+        printf("📋 Tamaño calculado del template 1: %lu bytes\n", templateSize);
+    }
+    
+    ret = SGFPM_GetTemplateSize(sgfplib, tpl2, &templateSize);
+    if (ret == SGFDX_ERROR_NONE) {
+        printf("📋 Tamaño calculado del template 2: %lu bytes\n", templateSize);
+    }
+
     SGFPM_Terminate(sgfplib);
+    free(tpl1);
+    free(tpl2);
     return 0;
 }

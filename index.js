@@ -57,7 +57,7 @@ app.post("/fingerprint/verify", async (req, res) => {
               if (error) {
                   return reject(`Error capturando huella: ${stderr.toString()}`);
               }
-              fs.writeFileSync("temp_fingerprint.bin", stdout); // Guardar template capturado
+              fs.writeFileSync("temp_fingerprint.bin", stdout);
               console.log(`📂 Huella capturada, tamaño: ${stdout.length} bytes`);
               resolve();
           });
@@ -68,32 +68,52 @@ app.post("/fingerprint/verify", async (req, res) => {
 
       for (const row of rows) {
           const userId = row.user_id;
-          const fingerprintBuffer = Buffer.from(dbResult[0].fingerprint, 'binary');
-          const fingerprintTrimmed = fingerprintBuffer.slice(-378); // Asegurar que solo queden 378 bytes
+          const fingerprintBuffer = Buffer.from(row.fingerprint, 'binary');
+          const fingerprintTrimmed = fingerprintBuffer.slice(-378);
           fs.writeFileSync("db_fingerprint.bin", fingerprintTrimmed);
 
           // Verificar tamaño antes de continuar
-          if (fingerprintBuffer.length !== 378) {
-              console.log(`❌ Tamaño incorrecto en BD para usuario ${userId}: ${fingerprintBuffer.length} bytes`);
-              continue;  // Saltar esta huella y seguir con la siguiente
+          if (fingerprintTrimmed.length !== 378) {
+              console.log(`❌ Tamaño incorrecto en BD para usuario ${userId}: ${fingerprintTrimmed.length} bytes`);
+              continue;
           }
 
-          // Guardar la huella recuperada en un archivo
-          fs.writeFileSync("db_fingerprint.bin", fingerprintBuffer);
-          console.log(`⚖️ Comparando con huella de usuario ID ${userId}, tamaño: ${fingerprintBuffer.length} bytes`);
+          console.log(`⚖️ Comparando con huella de usuario ID ${userId}, tamaño: ${fingerprintTrimmed.length} bytes`);
 
-          // Ejecutar la comparación
           const matchResult = await new Promise((resolve, reject) => {
-              execFile("./match_template", ["temp_fingerprint.bin", "db_fingerprint.bin"], (error, stdout, stderr) => {
+              execFile("./match_template", ["temp_fingerprint.bin", "db_fingerprint.bin"], 
+              { encoding: 'utf8' },  // Agregamos encoding explícito
+              (error, stdout, stderr) => {
+                  // Siempre mostrar la salida completa
+                  console.log(`\n📊 Resultado detallado para usuario ${userId}:`);
+                  if (stdout) console.log("Stdout:", stdout);
+                  if (stderr) console.log("Stderr:", stderr);
+                  
                   if (error) {
-                      console.log(`❌ Error en comparación con usuario ID ${userId}: ${stderr.toString()}`);
+                      console.log(`❌ Error ejecutando match_template:`, error);
                       return resolve(false);
                   }
-                  resolve(stdout.includes("✅ Las huellas coinciden"));
+
+                  // Verificar si hay coincidencia y mostrar el puntaje
+                  const matched = stdout.includes("✅ Las huellas coinciden");
+                  const scoreMatch = stdout.match(/Puntaje de coincidencia: (\d+)/);
+                  const score = scoreMatch ? scoreMatch[1] : 'N/A';
+                  
+                  console.log(`📊 Puntaje: ${score}`);
+                  console.log(`${matched ? '👍' : '👎'} Coincidencia: ${matched}`);
+                  
+                  resolve(matched);
               });
           });
 
           if (matchResult) {
+              // Verificar archivos temporales
+              console.log("\n📂 Verificando archivos temporales:");
+              const tempContent = fs.readFileSync("temp_fingerprint.bin");
+              const dbContent = fs.readFileSync("db_fingerprint.bin");
+              console.log(`temp_fingerprint.bin: ${tempContent.length} bytes, primeros 10: ${tempContent.slice(0,10).toString('hex')}`);
+              console.log(`db_fingerprint.bin: ${dbContent.length} bytes, primeros 10: ${dbContent.slice(0,10).toString('hex')}`);
+              
               console.log(`✅ Huella coincidente encontrada: Usuario ID ${userId}`);
               return res.json({ success: true, userId });
           }
@@ -102,8 +122,19 @@ app.post("/fingerprint/verify", async (req, res) => {
       console.log("❌ No se encontraron coincidencias en la base de datos.");
       res.json({ success: false, message: "No se encontraron coincidencias" });
   } catch (error) {
-      console.error("❌ Error en verificación:", error);
-      res.status(500).json({ success: false, error: error.toString() });
+      console.error("❌ Error verificando huellas:", error);
+      res.status(500).json({ success: false, error });
+  } finally {
+      // Limpieza de archivos temporales
+      try {
+          if (fs.existsSync("temp_fingerprint.bin")) fs.unlinkSync("temp_fingerprint.bin");
+          if (fs.existsSync("db_fingerprint.bin")) fs.unlinkSync("db_fingerprint.bin");
+      } catch (error) {
+          console.error("Error limpiando archivos temporales:", error);
+      }
   }
 });
-app.listen(3000, () => console.log('API lista en puerto 3000'));
+
+app.listen(3000, () => {
+  console.log('Servidor corriendo en http://localhost:3000');
+});

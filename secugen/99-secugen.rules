@@ -1,0 +1,5 @@
+# Reglas para lector SecuGen
+SUBSYSTEM=="usb", ATTRS{idVendor}=="1162", ATTRS{idProduct}=="0300", MODE="0666"
+SUBSYSTEM=="usb", ATTRS{idVendor}=="1162", ATTRS{idProduct}=="0302", MODE="0666"
+SUBSYSTEM=="usb", ATTRS{idVendor}=="1162", ATTRS{idProduct}=="0322", MODE="0666"
+SUBSYSTEM=="usb", ATTRS{idVendor}=="1162", ATTRS{idProduct}=="0900", MODE="0666" 
